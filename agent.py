@@ -15,8 +15,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain.agents.middleware import wrap_tool_call
-from langchain_core.messages import ToolMessage
+from langchain.agents.middleware import wrap_model_call, wrap_tool_call
+from langchain.agents.middleware.types import ModelResponse
+from langchain_core.messages import AIMessage, ToolMessage
 
 warnings.filterwarnings("ignore", message=".*langchain.mcp.*beta.*")
 from langchain.mcp import MCPAdapter  # noqa: E402
@@ -61,6 +62,30 @@ async def tool_errors_to_model(request, handler):
         )
 
 
+_BAD_TOOL_CALL = ("tool call validation failed", "tool_use_failed", "failed to call a function")
+
+
+@wrap_model_call
+async def retry_bad_tool_call(request, handler):
+    """Groq sometimes rejects the model's own tool call (e.g. empty arguments) with a
+    400 before it ever reaches a tool. Retry once; if it fails again, ask the student
+    for the details instead of crashing the chat. Other errors are re-raised."""
+    for _ in range(2):
+        try:
+            return await handler(request)
+        except Exception as err:  # noqa: BLE001
+            if not any(k in str(err).lower() for k in _BAD_TOOL_CALL):
+                raise
+    return ModelResponse(
+        result=[
+            AIMessage(
+                "I couldn't set that calculation up yet. Could you give me the numbers it "
+                "needs, for example your current CGPA and completed credit hours?"
+            )
+        ]
+    )
+
+
 def build_agent(tools, checkpointer, model=None):
     if model is None:
         from llm import llm as model
@@ -69,6 +94,6 @@ def build_agent(tools, checkpointer, model=None):
         model,
         tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[tool_errors_to_model],
+        middleware=[tool_errors_to_model, retry_bad_tool_call],
         checkpointer=checkpointer,
     )
