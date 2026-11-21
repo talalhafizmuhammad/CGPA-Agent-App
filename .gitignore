@@ -1,0 +1,6 @@
+.env
+chats.sqlite*
+reports/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
