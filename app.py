@@ -3,12 +3,13 @@
 import asyncio
 import os
 import sqlite3
+import time
+import uuid
 from pathlib import Path
 
 import streamlit as st
 
-# On Streamlit Cloud the keys live in st.secrets, not .env
-try:
+try:  # Streamlit Cloud keeps keys in st.secrets, not .env
     for _k in ("GROQ_API_KEY", "MCP_URL", "FASTMCP_KEY"):
         if _k in st.secrets and not os.getenv(_k):
             os.environ[_k] = st.secrets[_k]
@@ -18,7 +19,7 @@ except Exception:
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from agent import MCP_URL, build_agent, load_tools
+from agent import build_agent, load_tools
 from memory import get_messages, repair_dangling
 from streaming import stream_events
 
@@ -34,130 +35,207 @@ TOOL_LABELS = {
     "save_report": "Saving your report",
 }
 
-STARTERS = [
-    ("📘 Semester GPA", "I want to calculate my semester GPA from my marks."),
-    ("📈 New CGPA", "What will my CGPA be after this semester?"),
-    ("🎯 Target CGPA", "What GPA do I need to reach my target CGPA?"),
+SUGGESTIONS = [
+    ("Semester GPA", "Work out my GPA from this semester's marks", "I want to calculate my semester GPA from my marks."),
+    ("New CGPA", "See where my CGPA lands after this semester", "What will my CGPA be after this semester?"),
+    ("Target CGPA", "Find the GPA I need to hit my target", "What GPA do I need to reach my target CGPA?"),
 ]
 
-st.set_page_config(page_title="PUCIT CGPA Guider", page_icon="🎓", layout="centered")
+st.set_page_config(page_title="CGPA Guider", page_icon=":material/school:", layout="wide")
 
 st.markdown(
     """
 <style>
-#MainMenu, footer, header [data-testid="stToolbar"] {visibility: hidden;}
-.block-container {padding-top: 2rem; max-width: 780px;}
-.hero {padding: 1.4rem 1.6rem; border-radius: 18px; margin-bottom: 1.2rem;
-       background: linear-gradient(135deg, #0f766e 0%, #1e3a8a 100%);}
-.hero h1 {margin: 0; font-size: 1.75rem; color: #fff;}
-.hero p {margin: .35rem 0 0; color: #d5e4f7; font-size: .98rem;}
-.pill {display: inline-block; padding: .15rem .65rem; border-radius: 999px;
-       font-size: .78rem; background: rgba(45,212,191,.15); color: #2dd4bf;}
-[data-testid="stChatMessage"] {border-radius: 14px; padding: .8rem 1rem;
-       background: #111a2e; border: 1px solid #1c2944;}
-section[data-testid="stSidebar"] {border-right: 1px solid #1c2944;}
-div.stButton > button {border-radius: 12px; width: 100%;}
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none;}
+.block-container {max-width: 760px; padding-top: 2.5rem; padding-bottom: 6rem;}
+
+/* sidebar */
+section[data-testid="stSidebar"] {background:#1f1e1d; border-right:1px solid #33322f; min-width:290px;}
+section[data-testid="stSidebar"] .block-container {padding-top:1.4rem;}
+.brand {font-family: Georgia, 'Times New Roman', serif; font-size:1.35rem; letter-spacing:.2px; margin-bottom:.9rem;}
+.brand span {color:#d97757;}
+.sect {font-size:.72rem; text-transform:uppercase; letter-spacing:.09em; color:#8b8a85; margin:1.1rem 0 .35rem .2rem;}
+section[data-testid="stSidebar"] .stButton > button {
+  width:100%; justify-content:flex-start; text-align:left; border:0; background:transparent;
+  color:#cfccc4; padding:.5rem .7rem; border-radius:9px; font-weight:400; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;}
+section[data-testid="stSidebar"] .stButton > button:hover {background:#2c2b29; color:#fff;}
+section[data-testid="stSidebar"] .stButton > button[kind="primary"] {background:#33312e; color:#fff;}
+section[data-testid="stSidebar"] .stButton > button p {overflow:hidden; text-overflow:ellipsis;}
+.newchat button {border:1px solid #3b3a36 !important; justify-content:center !important;}
+
+/* chat */
+[data-testid="stChatMessage"] {background:transparent; border:0; padding:.5rem 0; gap:.9rem;}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+  background:#30302e; border-radius:14px; padding:.75rem 1rem; margin:.4rem 0;}
+[data-testid="stChatMessage"] p {line-height:1.65; font-size:1.02rem;}
+[data-testid="stChatInput"] {border-radius:16px; border:1px solid #3b3a36; background:#30302e;}
+[data-testid="stChatInput"] textarea {font-size:1rem;}
+
+/* welcome */
+.hello {font-family: Georgia, 'Times New Roman', serif; font-size:2.35rem; line-height:1.2;
+        text-align:center; margin:12vh 0 .4rem;}
+.hello span {color:#d97757;}
+.sub {text-align:center; color:#9b9a94; margin-bottom:2.2rem;}
+[data-testid="stMain"] .stButton > button, .main .stButton > button {
+  width:100%; min-height:96px; text-align:left; justify-content:flex-start; align-items:flex-start;
+  background:#2b2a28; border:1px solid #3b3a36; border-radius:14px; padding:.9rem 1rem; white-space:normal;}
+[data-testid="stMain"] .stButton > button:hover {border-color:#d97757; background:#302f2c;}
+.status {color:#8b8a85; font-size:.8rem; margin:.3rem 0 0 .2rem;}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 
-def saved_threads() -> list[str]:
-    if not Path(DB_PATH).exists():
-        return []
+# ---------------------------------------------------------------- titles (sidebar list)
+def db():
     con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS conversations "
+        "(thread_id TEXT PRIMARY KEY, owner TEXT, title TEXT, updated REAL)"
+    )
+    return con
+
+
+def list_conversations(owner):
+    con = db()
     try:
-        return [r[0] for r in con.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")]
-    except sqlite3.Error:
-        return []
+        return con.execute(
+            "SELECT thread_id, title FROM conversations WHERE owner=? ORDER BY updated DESC", (owner,)
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def touch_conversation(thread_id, owner, first_message):
+    con = db()
+    try:
+        title = " ".join(first_message.split())
+        title = title if len(title) <= 38 else title[:36] + "…"
+        con.execute(
+            "INSERT INTO conversations VALUES (?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET updated=?",
+            (thread_id, owner, title, time.time(), time.time()),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def drop_conversation(thread_id):
+    con = db()
+    try:
+        con.execute("DELETE FROM conversations WHERE thread_id=?", (thread_id,))
+        con.commit()
     finally:
         con.close()
 
 
 async def with_agent(fn):
-    # fresh connection per action; Streamlit reruns the whole script each time
     tools = await load_tools()
     st.session_state["tool_count"] = len(tools)
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
         return await fn(build_agent(tools, memory), memory)
 
 
-st.markdown(
-    '<div class="hero"><h1>🎓 PUCIT CGPA Guider</h1>'
-    "<p>Semester GPA, projected CGPA and target planning. Every number comes from a tool, never a guess.</p></div>",
-    unsafe_allow_html=True,
-)
+def new_thread(owner):
+    return f"{owner}:{uuid.uuid4().hex[:8]}"
 
-# ------------------------------------------------------------ sidebar
-with st.sidebar:
-    st.subheader("Your chat")
-    threads = saved_threads()
-    pick = st.selectbox("Saved chats", ["(new)"] + threads)
-    name = st.text_input(
-        "Your name", value="" if pick == "(new)" else pick, placeholder="e.g. talal",
-        help="Used as your chat id. Use the same name later to get your history back.",
-    ).strip()
-    if name and name in threads:
-        if st.button("🗑️ Forget this chat"):
-            async def _forget(app, memory):
-                await memory.adelete_thread(name)
-            try:
-                asyncio.run(with_agent(_forget))
-                st.session_state.pop("reports", None)
-                st.rerun()
-            except Exception as err:
-                st.error(f"Could not forget: {type(err).__name__}")
-    st.divider()
-    n = st.session_state.get("tool_count")
-    st.markdown(
-        f'<span class="pill">● server connected · {n} tools</span>' if n
-        else '<span class="pill">● server not checked yet</span>',
-        unsafe_allow_html=True,
-    )
-    st.caption(MCP_URL)
+
+# ---------------------------------------------------------------- sign in (just a name)
+name = (st.query_params.get("u") or "").strip()
 
 if not name:
-    st.info("👈 Enter your name in the sidebar to start. Your chat is saved under that name.")
+    st.markdown('<div class="hello">Welcome to <span>CGPA Guider</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub">Tell me your name and I will keep your chats for next time.</div>', unsafe_allow_html=True)
+    entered = st.text_input("Your name", placeholder="e.g. Talal", label_visibility="collapsed")
+    if st.button("Continue", type="primary") and entered.strip():
+        st.query_params["u"] = entered.strip()
+        st.rerun()
     st.stop()
 
-config = {"configurable": {"thread_id": name}}
+if "thread" not in st.session_state or not st.session_state["thread"].startswith(f"{name}:"):
+    st.session_state["thread"] = new_thread(name)
+thread = st.session_state["thread"]
+config = {"configurable": {"thread_id": thread}}
 
-# ------------------------------------------------------------ history
+# ---------------------------------------------------------------- sidebar
+convs = list_conversations(name)
+with st.sidebar:
+    st.markdown('<div class="brand">CGPA <span>Guider</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="newchat">', unsafe_allow_html=True)
+    if st.button("＋  New chat", key="new", use_container_width=True):
+        st.session_state["thread"] = new_thread(name)
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if convs:
+        st.markdown('<div class="sect">Recent</div>', unsafe_allow_html=True)
+    for tid, title in convs:
+        row = st.columns([8, 1.3])
+        if row[0].button(title, key=f"open_{tid}", type="primary" if tid == thread else "secondary",
+                         use_container_width=True):
+            st.session_state["thread"] = tid
+            st.rerun()
+        if row[1].button("✕", key=f"del_{tid}", help="Delete this chat"):
+            async def _forget(app, memory, _tid=tid):
+                await memory.adelete_thread(_tid)
+            try:
+                asyncio.run(with_agent(_forget))
+            except Exception:
+                pass
+            drop_conversation(tid)
+            if tid == thread:
+                st.session_state["thread"] = new_thread(name)
+            st.rerun()
+
+    st.markdown('<div class="sect">Account</div>', unsafe_allow_html=True)
+    if st.button(f"{name}  ·  switch", key="switch", use_container_width=True):
+        st.query_params.clear()
+        st.session_state.pop("thread", None)
+        st.rerun()
+    n = st.session_state.get("tool_count")
+    st.markdown(f'<div class="status">{"● " + str(n) + " tools online" if n else "● connecting…"}</div>',
+                unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- history of this chat
 async def _history(app, memory):
     return await get_messages(app, config)
 
 try:
     history = asyncio.run(with_agent(_history))
-except Exception as err:
-    st.error(f"Can't reach the tool server ({type(err).__name__}). Try again in a moment.")
+except Exception:
+    st.error("Can't reach the calculator service right now. Please try again in a moment.")
     st.stop()
 
 shown = [m for m in history if isinstance(m, HumanMessage) or (isinstance(m, AIMessage) and m.text.strip())]
+USER_AV, BOT_AV = ":material/person:", ":material/school:"
 for m in shown:
-    with st.chat_message("user" if isinstance(m, HumanMessage) else "assistant",
-                         avatar="🧑‍🎓" if isinstance(m, HumanMessage) else "🎓"):
+    user = isinstance(m, HumanMessage)
+    with st.chat_message("user" if user else "assistant", avatar=USER_AV if user else BOT_AV):
         st.markdown(m.text)
 
 if not shown:
-    st.markdown(f"#### Hi {name}, what would you like to work on?")
-    cols = st.columns(len(STARTERS))
-    for col, (label, text) in zip(cols, STARTERS):
-        if col.button(label, key=f"starter_{label}"):
+    st.markdown(f'<div class="hello">Hi {name}, what are we <span>working on?</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub">Every number comes from a tool, never a guess.</div>', unsafe_allow_html=True)
+    cols = st.columns(len(SUGGESTIONS))
+    for col, (head, body, text) in zip(cols, SUGGESTIONS):
+        if col.button(f"**{head}**\n\n{body}", key=f"s_{head}"):
             st.session_state["queued"] = text
             st.rerun()
 
-# ------------------------------------------------------------ new message
-typed = st.chat_input("Ask about your GPA, CGPA or a target CGPA…")
+# ---------------------------------------------------------------- new message
+typed = st.chat_input("Ask about your GPA, CGPA or a target…")
 prompt = typed or st.session_state.pop("queued", None)
 
 if prompt:
-    with st.chat_message("user", avatar="🧑‍🎓"):
+    touch_conversation(thread, name, prompt)
+    with st.chat_message("user", avatar=USER_AV):
         st.markdown(prompt)
 
     async def _turn(app, memory):
         await repair_dangling(app, config)
-        with st.chat_message("assistant", avatar="🎓"):
+        with st.chat_message("assistant", avatar=BOT_AV):
             status = st.status("Thinking…", expanded=False)
             box = st.empty()
             text = ""
@@ -180,11 +258,16 @@ if prompt:
 
     try:
         asyncio.run(with_agent(_turn))
+        st.rerun()  # refresh the sidebar so the new chat title shows up
+    except st.errors.StreamlitAPIException:
+        raise
     except Exception as err:
+        if type(err).__name__ in ("RerunException", "StopException"):
+            raise
         st.error(f"Something went wrong ({type(err).__name__}). Please try again.")
 
 for i, (fname, content) in enumerate(st.session_state.get("reports", [])):
     fname = Path(fname).name
     if not fname.endswith(".txt"):
         fname += ".txt"
-    st.download_button(f"⬇️ Download {fname}", content, file_name=fname, key=f"dl{i}")
+    st.download_button(f"Download {fname}", content, file_name=fname, key=f"dl{i}")
