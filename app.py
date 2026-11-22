@@ -36,9 +36,9 @@ TOOL_LABELS = {
 }
 
 SUGGESTIONS = [
-    ("Semester GPA", "Work out my GPA from this semester's marks", "I want to calculate my semester GPA from my marks."),
-    ("New CGPA", "See where my CGPA lands after this semester", "What will my CGPA be after this semester?"),
-    ("Target CGPA", "Find the GPA I need to hit my target", "What GPA do I need to reach my target CGPA?"),
+    ("chip_gpa", ":material/calculate:  Semester GPA", "I want to calculate my semester GPA from my marks."),
+    ("chip_cgpa", ":material/trending_up:  New CGPA", "What will my CGPA be after this semester?"),
+    ("chip_target", ":material/flag:  Target CGPA", "What GPA do I need to reach my target CGPA?"),
 ]
 
 st.set_page_config(page_title="CGPA Guider", page_icon=":material/school:", layout="wide")
@@ -61,8 +61,11 @@ section[data-testid="stSidebar"] .stButton > button {
   overflow:hidden; text-overflow:ellipsis;}
 section[data-testid="stSidebar"] .stButton > button:hover {background:#2c2b29; color:#fff;}
 section[data-testid="stSidebar"] .stButton > button[kind="primary"] {background:#33312e; color:#fff;}
-section[data-testid="stSidebar"] .stButton > button p {overflow:hidden; text-overflow:ellipsis;}
-.newchat button {border:1px solid #3b3a36 !important; justify-content:center !important;}
+section[data-testid="stSidebar"] .stButton > button > div {width:100%; justify-content:flex-start;}
+section[data-testid="stSidebar"] .stButton > button p {text-align:left; width:100%; margin:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.newchat button {border:1px solid #3b3a36 !important;}
+.newchat button > div, .newchat button p {justify-content:center !important; text-align:center !important;}
 
 /* chat */
 [data-testid="stChatMessage"] {background:transparent; border:0; padding:.5rem 0; gap:.9rem;}
@@ -77,10 +80,12 @@ section[data-testid="stSidebar"] .stButton > button p {overflow:hidden; text-ove
         text-align:center; margin:12vh 0 .4rem;}
 .hello span {color:#d97757;}
 .sub {text-align:center; color:#9b9a94; margin-bottom:2.2rem;}
-[data-testid="stMain"] .stButton > button, .main .stButton > button {
-  width:100%; min-height:96px; text-align:left; justify-content:flex-start; align-items:flex-start;
-  background:#2b2a28; border:1px solid #3b3a36; border-radius:14px; padding:.9rem 1rem; white-space:normal;}
-[data-testid="stMain"] .stButton > button:hover {border-color:#d97757; background:#302f2c;}
+[class*="st-key-chip_"] button {
+  width:100%; min-height:54px; border-radius:999px; background:#2b2a28; border:1px solid #3b3a36;
+  color:#e6e3da; font-size:.98rem;}
+[class*="st-key-chip_"] button:hover {border-color:#d97757; color:#fff; background:#302f2c;}
+.st-key-go button {width:100%; min-height:48px; border-radius:12px; font-weight:600;}
+[data-testid="stMain"] [data-testid="stTextInput"] input {min-height:48px; border-radius:12px; text-align:center;}
 .status {color:#8b8a85; font-size:.8rem; margin:.3rem 0 0 .2rem;}
 </style>
 """,
@@ -148,10 +153,12 @@ name = (st.query_params.get("u") or "").strip()
 if not name:
     st.markdown('<div class="hello">Welcome to <span>CGPA Guider</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sub">Tell me your name and I will keep your chats for next time.</div>', unsafe_allow_html=True)
-    entered = st.text_input("Your name", placeholder="e.g. Talal", label_visibility="collapsed")
-    if st.button("Continue", type="primary") and entered.strip():
-        st.query_params["u"] = entered.strip()
-        st.rerun()
+    _l, mid, _r = st.columns([1, 2, 1])
+    with mid:
+        entered = st.text_input("Your name", placeholder="Your name", label_visibility="collapsed")
+        if st.button("Continue", type="primary", key="go") and entered.strip():
+            st.query_params["u"] = entered.strip()
+            st.rerun()
     st.stop()
 
 if "thread" not in st.session_state or not st.session_state["thread"].startswith(f"{name}:"):
@@ -219,8 +226,8 @@ if not shown:
     st.markdown(f'<div class="hello">Hi {name}, what are we <span>working on?</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sub">Every number comes from a tool, never a guess.</div>', unsafe_allow_html=True)
     cols = st.columns(len(SUGGESTIONS))
-    for col, (head, body, text) in zip(cols, SUGGESTIONS):
-        if col.button(f"**{head}**\n\n{body}", key=f"s_{head}"):
+    for col, (key, label, text) in zip(cols, SUGGESTIONS):
+        if col.button(label, key=key, use_container_width=True):
             st.session_state["queued"] = text
             st.rerun()
 
