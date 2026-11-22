@@ -46,11 +46,24 @@ st.set_page_config(page_title="CGPA Guider", page_icon=":material/school:", layo
 st.markdown(
     """
 <style>
-#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none;}
-.block-container {max-width: 760px; padding-top: 2.5rem; padding-bottom: 6rem;}
+#MainMenu, footer, [data-testid="stDecoration"], [data-testid="stToolbarActions"],
+[data-testid="stAppDeployButton"], [data-testid="stStatusWidget"] {display:none !important;}
+[data-testid="stHeader"] {background:transparent;}
+[data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"] {
+  display:flex !important; visibility:visible !important; opacity:1 !important;}
+[data-testid="stAppViewContainer"] {background:
+  radial-gradient(900px 420px at 50% -80px, rgba(217,119,87,.13), transparent 70%), #262624;}
+.block-container {max-width:760px !important; margin-left:auto !important; margin-right:auto !important;
+  padding-top:2.5rem; padding-bottom:6rem;}
+[data-testid="stBottomBlockContainer"] {max-width:760px !important; margin-left:auto !important;
+  margin-right:auto !important; padding-left:1rem; padding-right:1rem;}
+.logo {width:54px; height:54px; margin:0 auto 1rem; border-radius:16px; display:flex;
+  align-items:center; justify-content:center; font-family:Georgia,serif; font-size:1.7rem; color:#fff;
+  background:linear-gradient(135deg,#d97757,#b4532f); box-shadow:0 8px 28px rgba(217,119,87,.35);}
 
 /* sidebar */
-section[data-testid="stSidebar"] {background:#1f1e1d; border-right:1px solid #33322f; min-width:290px;}
+section[data-testid="stSidebar"] {background:#1f1e1d; border-right:1px solid #33322f;}
+section[data-testid="stSidebar"][aria-expanded="true"] {min-width:290px;}
 section[data-testid="stSidebar"] .block-container {padding-top:1.4rem;}
 .brand {font-family: Georgia, 'Times New Roman', serif; font-size:1.35rem; letter-spacing:.2px; margin-bottom:.9rem;}
 .brand span {color:#d97757;}
@@ -151,7 +164,8 @@ def new_thread(owner):
 name = (st.query_params.get("u") or "").strip()
 
 if not name:
-    st.markdown('<div class="hello">Welcome to <span>CGPA Guider</span></div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:8vh"></div><div class="logo">C</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hello" style="margin-top:0">Welcome to <span>CGPA Guider</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sub">Tell me your name and I will keep your chats for next time.</div>', unsafe_allow_html=True)
     _l, mid, _r = st.columns([1, 2, 1])
     with mid:
@@ -223,7 +237,8 @@ for m in shown:
         st.markdown(m.text)
 
 if not shown:
-    st.markdown(f'<div class="hello">Hi {name}, what are we <span>working on?</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="logo" style="margin-top:9vh">C</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hello" style="margin-top:0">Hi {name}, what are we <span>working on?</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sub">Every number comes from a tool, never a guess.</div>', unsafe_allow_html=True)
     cols = st.columns(len(SUGGESTIONS))
     for col, (key, label, text) in zip(cols, SUGGESTIONS):
