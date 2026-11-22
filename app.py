@@ -1,10 +1,4 @@
-"""
-app.py - Streamlit chat UI for the CGPA agent (bonus variant of main.py).
-
-Same agent, same MCP server, same SQLite memory (chats.sqlite). Name in the sidebar =
-thread_id. Run:  streamlit run app.py
-Config: MCP_URL / FASTMCP_KEY / GROQ_API_KEY from .env, or from st.secrets when deployed.
-"""
+"""Streamlit chat UI for the CGPA agent. Run: streamlit run app.py"""
 
 import asyncio
 import os
@@ -13,13 +7,13 @@ from pathlib import Path
 
 import streamlit as st
 
-# Streamlit Cloud has no .env: copy secrets into the environment BEFORE agent.py reads them.
+# On Streamlit Cloud the keys live in st.secrets, not .env
 try:
     for _k in ("GROQ_API_KEY", "MCP_URL", "FASTMCP_KEY"):
         if _k in st.secrets and not os.getenv(_k):
             os.environ[_k] = st.secrets[_k]
 except Exception:
-    pass  # no secrets.toml locally - .env is used
+    pass
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -30,7 +24,43 @@ from streaming import stream_events
 
 DB_PATH = str(Path(__file__).parent / "chats.sqlite")
 
-st.set_page_config(page_title="PUCIT CGPA Guider", layout="wide")
+TOOL_LABELS = {
+    "marks_to_grade_points": "Converting marks to grade points",
+    "calculate_semester_gpa": "Calculating semester GPA",
+    "calculate_new_cgpa": "Projecting new CGPA",
+    "required_gpa_for_target": "Working out the GPA you need",
+    "get_semester_courses": "Looking up semester courses",
+    "get_remaining_credit_hours": "Counting remaining credit hours",
+    "save_report": "Saving your report",
+}
+
+STARTERS = [
+    ("📘 Semester GPA", "I want to calculate my semester GPA from my marks."),
+    ("📈 New CGPA", "What will my CGPA be after this semester?"),
+    ("🎯 Target CGPA", "What GPA do I need to reach my target CGPA?"),
+]
+
+st.set_page_config(page_title="PUCIT CGPA Guider", page_icon="🎓", layout="centered")
+
+st.markdown(
+    """
+<style>
+#MainMenu, footer, header [data-testid="stToolbar"] {visibility: hidden;}
+.block-container {padding-top: 2rem; max-width: 780px;}
+.hero {padding: 1.4rem 1.6rem; border-radius: 18px; margin-bottom: 1.2rem;
+       background: linear-gradient(135deg, #0f766e 0%, #1e3a8a 100%);}
+.hero h1 {margin: 0; font-size: 1.75rem; color: #fff;}
+.hero p {margin: .35rem 0 0; color: #d5e4f7; font-size: .98rem;}
+.pill {display: inline-block; padding: .15rem .65rem; border-radius: 999px;
+       font-size: .78rem; background: rgba(45,212,191,.15); color: #2dd4bf;}
+[data-testid="stChatMessage"] {border-radius: 14px; padding: .8rem 1rem;
+       background: #111a2e; border: 1px solid #1c2944;}
+section[data-testid="stSidebar"] {border-right: 1px solid #1c2944;}
+div.stButton > button {border-radius: 12px; width: 100%;}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 def saved_threads() -> list[str]:
@@ -46,91 +76,115 @@ def saved_threads() -> list[str]:
 
 
 async def with_agent(fn):
-    """Open the checkpointer + tools, run fn(app, memory), close. Streamlit reruns the
-    script on every interaction, so each action gets its own short-lived connection."""
+    # fresh connection per action; Streamlit reruns the whole script each time
     tools = await load_tools()
+    st.session_state["tool_count"] = len(tools)
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
         return await fn(build_agent(tools, memory), memory)
 
 
-# ---------------------------------------------------------------- sidebar
+st.markdown(
+    '<div class="hero"><h1>🎓 PUCIT CGPA Guider</h1>'
+    "<p>Semester GPA, projected CGPA and target planning. Every number comes from a tool, never a guess.</p></div>",
+    unsafe_allow_html=True,
+)
+
+# ------------------------------------------------------------ sidebar
 with st.sidebar:
-    st.header("CGPA Guider")
+    st.subheader("Your chat")
     threads = saved_threads()
     pick = st.selectbox("Saved chats", ["(new)"] + threads)
-    typed = st.text_input("Who is chatting? (this is your thread_id)", value="" if pick == "(new)" else pick)
-    name = typed.strip()
-    st.caption(f"MCP server: {MCP_URL}")
-    if name and name in threads and st.button("Forget this chat", use_container_width=True):
-        async def _forget(app, memory):
-            await memory.adelete_thread(name)
-        try:
-            asyncio.run(with_agent(_forget))
-            st.session_state.pop("reports", None)
-            st.rerun()
-        except Exception as err:
-            st.error(f"Could not forget: {type(err).__name__}: {err}")
+    name = st.text_input(
+        "Your name", value="" if pick == "(new)" else pick, placeholder="e.g. talal",
+        help="Used as your chat id. Use the same name later to get your history back.",
+    ).strip()
+    if name and name in threads:
+        if st.button("🗑️ Forget this chat"):
+            async def _forget(app, memory):
+                await memory.adelete_thread(name)
+            try:
+                asyncio.run(with_agent(_forget))
+                st.session_state.pop("reports", None)
+                st.rerun()
+            except Exception as err:
+                st.error(f"Could not forget: {type(err).__name__}")
+    st.divider()
+    n = st.session_state.get("tool_count")
+    st.markdown(
+        f'<span class="pill">● server connected · {n} tools</span>' if n
+        else '<span class="pill">● server not checked yet</span>',
+        unsafe_allow_html=True,
+    )
+    st.caption(MCP_URL)
 
-st.title("PUCIT GPA / CGPA Assistant")
 if not name:
-    st.info("Enter your name in the sidebar to start. Your chat is saved under that name.")
+    st.info("👈 Enter your name in the sidebar to start. Your chat is saved under that name.")
     st.stop()
+
 config = {"configurable": {"thread_id": name}}
 
-# ---------------------------------------------------------------- saved history
+# ------------------------------------------------------------ history
 async def _history(app, memory):
     return await get_messages(app, config)
 
 try:
     history = asyncio.run(with_agent(_history))
 except Exception as err:
-    st.error(f"Cannot reach the MCP server at {MCP_URL} ({type(err).__name__}). Start it or fix MCP_URL.")
+    st.error(f"Can't reach the tool server ({type(err).__name__}). Try again in a moment.")
     st.stop()
 
-for m in history:
-    if isinstance(m, HumanMessage):
-        with st.chat_message("user"):
-            st.markdown(m.text)
-    elif isinstance(m, AIMessage) and m.text.strip():
-        with st.chat_message("assistant"):
-            st.markdown(m.text)
+shown = [m for m in history if isinstance(m, HumanMessage) or (isinstance(m, AIMessage) and m.text.strip())]
+for m in shown:
+    with st.chat_message("user" if isinstance(m, HumanMessage) else "assistant",
+                         avatar="🧑‍🎓" if isinstance(m, HumanMessage) else "🎓"):
+        st.markdown(m.text)
 
-# ---------------------------------------------------------------- new message
-if prompt := st.chat_input("Ask about your GPA, CGPA, or a target CGPA..."):
-    with st.chat_message("user"):
+if not shown:
+    st.markdown(f"#### Hi {name}, what would you like to work on?")
+    cols = st.columns(len(STARTERS))
+    for col, (label, text) in zip(cols, STARTERS):
+        if col.button(label, key=f"starter_{label}"):
+            st.session_state["queued"] = text
+            st.rerun()
+
+# ------------------------------------------------------------ new message
+typed = st.chat_input("Ask about your GPA, CGPA or a target CGPA…")
+prompt = typed or st.session_state.pop("queued", None)
+
+if prompt:
+    with st.chat_message("user", avatar="🧑‍🎓"):
         st.markdown(prompt)
 
     async def _turn(app, memory):
-        fixed = await repair_dangling(app, config)  # heal orphaned tool calls (Task 6)
-        with st.chat_message("assistant"):
-            status = st.status("Working it out...", expanded=False)
+        await repair_dangling(app, config)
+        with st.chat_message("assistant", avatar="🎓"):
+            status = st.status("Thinking…", expanded=False)
             box = st.empty()
             text = ""
             async for ev in stream_events(app, config, prompt):
                 if ev[0] == "token":
                     text += ev[1]
-                    box.markdown(text + "▌")  # live typing
+                    box.markdown(text + "▌")
                 elif ev[0] == "call":
-                    status.write(f"Calling `{ev[1]}` {ev[2]}")
+                    status.update(label=TOOL_LABELS.get(ev[1], ev[1]) + "…")
+                    status.write(f"`{ev[1]}` {ev[2]}")
                     if ev[1] == "save_report":
                         st.session_state.setdefault("reports", []).append(
                             (str(ev[2].get("filename", "report")), str(ev[2].get("content", "")))
                         )
                 elif ev[0] == "result":
-                    status.write(f"Result: {ev[1]}")
-                    text = ""  # the next model message is a fresh answer
+                    status.write(f"→ {ev[1]}")
+                    text = ""
             box.markdown(text)
             status.update(label="Done", state="complete")
-        return fixed
 
     try:
         asyncio.run(with_agent(_turn))
-    except Exception as err:  # server down, rate limit, ... - keep the app alive
-        st.error(f"{type(err).__name__}: {err} - try again.")
+    except Exception as err:
+        st.error(f"Something went wrong ({type(err).__name__}). Please try again.")
 
 for i, (fname, content) in enumerate(st.session_state.get("reports", [])):
     fname = Path(fname).name
-    st.download_button(
-        f"Download {fname if fname.endswith('.txt') else fname + '.txt'}",
-        content, file_name=fname if fname.endswith(".txt") else fname + ".txt", key=f"dl{i}",
-    )
+    if not fname.endswith(".txt"):
+        fname += ".txt"
+    st.download_button(f"⬇️ Download {fname}", content, file_name=fname, key=f"dl{i}")
