@@ -77,8 +77,9 @@ section[data-testid="stSidebar"] .stButton > button[kind="primary"] {background:
 section[data-testid="stSidebar"] .stButton > button > div {width:100%; justify-content:flex-start;}
 section[data-testid="stSidebar"] .stButton > button p {text-align:left; width:100%; margin:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.newchat button {border:1px solid #3b3a36 !important;}
-.newchat button > div, .newchat button p {justify-content:center !important; text-align:center !important;}
+.st-key-new button {border:1px solid #3b3a36 !important; background:#2a2927 !important;}
+.st-key-new button:hover {border-color:#d97757 !important;}
+.st-key-new button > div, .st-key-new button p {justify-content:center !important; text-align:center !important;}
 
 /* chat */
 [data-testid="stChatMessage"] {background:transparent; border:0; padding:.5rem 0; gap:.9rem;}
@@ -170,7 +171,7 @@ if not name:
     _l, mid, _r = st.columns([1, 2, 1])
     with mid:
         entered = st.text_input("Your name", placeholder="Your name", label_visibility="collapsed")
-        if st.button("Continue", type="primary", key="go") and entered.strip():
+        if st.button("Continue", type="primary", key="go", use_container_width=True) and entered.strip():
             st.query_params["u"] = entered.strip()
             st.rerun()
     st.stop()
@@ -184,11 +185,9 @@ config = {"configurable": {"thread_id": thread}}
 convs = list_conversations(name)
 with st.sidebar:
     st.markdown('<div class="brand">CGPA <span>Guider</span></div>', unsafe_allow_html=True)
-    st.markdown('<div class="newchat">', unsafe_allow_html=True)
     if st.button("＋  New chat", key="new", use_container_width=True):
         st.session_state["thread"] = new_thread(name)
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if convs:
         st.markdown('<div class="sect">Recent</div>', unsafe_allow_html=True)
